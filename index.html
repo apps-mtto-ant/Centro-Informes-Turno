@@ -234,7 +234,7 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
     <div class="badge">FT</div>
     <div class="brand-mid">
       <h1>Centro Informe Fin de Turno ANT</h1>
-      <p>Compresores · v1.0 RC · Multiusuario</p>
+      <p>Compresores · v1.0 RC2 · Multiusuario</p>
     </div>
     <div class="badge">ANT</div>
   </div>
@@ -284,7 +284,7 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
       <div id="publishStatus" class="status" style="margin-top:8px">Publicación: procese un plan y conecte el backend de Compresores.</div>
       <div id="activePlanStatus" class="status" style="margin-top:8px">Plan activo servidor: conecte el backend para consultar.</div>
       <div class="actions" style="margin-top:8px">
-        <button id="btnCargarPlanActivo" class="btn-secondary" disabled>Cargar Plan Activo</button>
+        <button id="btnCargarPlanActivo" class="btn-secondary" disabled>Recargar Plan Activo desde servidor</button>
       </div>
       <p class="note">
         Regla de turno: se unen ambos planes, se consideran solo filas <b>visibles</b> de PEXCOM01,
@@ -1135,7 +1135,12 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
     $('btnCsv').disabled=filteredRecords.length===0;
     const mapOk=[...a.byOt.keys()].filter(ot=>resolveOtMapping(ot,filteredRecords).estado==='SEGURO').length;
     const mapNoneCount=[...a.byOt.keys()].filter(ot=>resolveOtMapping(ot,filteredRecords).estado==='SIN_EQUIPO').length;
-    setStatus(`Plan procesado: ${filteredRecords.length} operaciones / ${a.byOt.size} OT únicas · ${mapOk} OT con equipo resuelto · ${mapNoneCount} OT sin equipo.`,'ok');
+    setStatus(
+      activePlanLoadedFromBackend
+        ? `Plan Activo servidor: ${filteredRecords.length} operaciones / ${a.byOt.size} OT únicas · ${mapOk} OT con equipo resuelto · ${mapNoneCount} OT sin equipo.`
+        : `Plan procesado: ${filteredRecords.length} operaciones / ${a.byOt.size} OT únicas · ${mapOk} OT con equipo resuelto · ${mapNoneCount} OT sin equipo.`,
+      'ok'
+    );
     updatePublishUi();
   }
 
@@ -1291,6 +1296,12 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
       btn.disabled=true;
       st.className='status';
       st.textContent='Publicación: procese un plan para habilitar esta etapa.';
+      return;
+    }
+    if(activePlanLoadedFromBackend){
+      btn.disabled=true;
+      st.className='status';
+      st.textContent='Plan Activo recuperado desde servidor · publicación deshabilitada en este modo.';
       return;
     }
     const cfg=getVerifiedBackendCfg();
@@ -1494,6 +1505,32 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
     return data;
   }
 
+  function normalizarFechaBackend(valor){
+    if(valor===undefined || valor===null || valor==='') return '';
+    const raw=String(valor).trim();
+    let m=raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m=raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+    if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+    // Apps Script/Sheets puede serializar una celda fecha como
+    // "Fri Sep 25 2026 00:00:00 GMT-0300 (...)". Extraemos el día calendario
+    // sin depender del idioma del navegador ni de conversiones UTC.
+    const months={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+    m=raw.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{4})\b/i);
+    if(m){
+      const mm=months[m[1].slice(0,3).toLowerCase()];
+      return `${m[3]}-${mm}-${String(m[2]).padStart(2,'0')}`;
+    }
+    const d=new Date(raw);
+    if(!Number.isNaN(d.getTime())){
+      const yyyy=d.getFullYear();
+      const mm=String(d.getMonth()+1).padStart(2,'0');
+      const dd=String(d.getDate()).padStart(2,'0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return '';
+  }
+
   function planItemToRecords(item,idx){
     const ops=Array.isArray(item.operaciones) && item.operaciones.length ? item.operaciones : [{operacion:'',texto:'',cantidad:0,duracion:0,hh:0}];
     const baseMap={
@@ -1504,7 +1541,7 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
       detalle:'Plan Activo recuperado desde backend.'
     };
     return ops.map((op,i)=>({
-      fechaPrograma:item.fechaPrograma||'',
+      fechaPrograma:normalizarFechaBackend(item.fechaPrograma),
       ot:String(item.ot||''),
       operacion:String(op.operacion || (i+1)),
       clase:String(item.claseOrden||'').toUpperCase(),
@@ -1515,7 +1552,7 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
       cantidad:Number(op.cantidad||0),
       duracion:Number(op.duracion||0),
       hh:Number(op.hh||0),
-      fechaInicioSAP:item.fechaPrograma||'',
+      fechaInicioSAP:normalizarFechaBackend(item.fechaPrograma),
       status:'PLAN ACTIVO',
       denominacion:item.areaNombre || item.ubicacionSap || '',
       ubicacion:item.ubicacionSap||'',
@@ -1540,9 +1577,11 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
     activePlanId=plan.planId||'';
     activePlanLoadedFromBackend=true;
     recomputeDetectedRange();
-    if(plan.fechaDesde) $('desde').value=plan.fechaDesde;
+    const fechaDesdePlan=normalizarFechaBackend(plan.fechaDesde);
+    const fechaHastaPlan=normalizarFechaBackend(plan.fechaHasta);
+    if(fechaDesdePlan) $('desde').value=fechaDesdePlan;
     else if(detectedRange.min) $('desde').value=detectedRange.min;
-    if(plan.fechaHasta) $('hasta').value=plan.fechaHasta;
+    if(fechaHastaPlan) $('hasta').value=fechaHastaPlan;
     else if($('desde').value) $('hasta').value=addDaysISO($('desde').value,6);
     const m=/^S(\d+)/.exec(String(plan.semana||''));
     if(m) $('semana').value=String(Number(m[1]));
@@ -1565,7 +1604,7 @@ button{min-height:44px;border:0;border-radius:9px;padding:10px 14px;font-weight:
       if(!silent) setActivePlanStatus('No hay Plan Activo publicado en el backend.','warn');
       return {ok:false,reason:'no_active_plan'};
     }
-    if(soloSiCambio && activePlanId && String(estado.planId)===String(activePlanId)){
+    if(soloSiCambio && activePlanId && String(estado.planId)===String(activePlanId) && $('desde').value && $('hasta').value){
       if(!silent) setActivePlanStatus(
         `<b>✓ Plan Activo vigente.</b> ${esc(estado.semana||'—')} · ${estado.cantidadOt??'—'} OT · Plan ID: <span class="mono">${esc(estado.planId)}</span>`,
         'ok'
